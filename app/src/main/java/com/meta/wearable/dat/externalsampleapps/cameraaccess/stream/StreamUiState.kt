@@ -14,6 +14,7 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.stream
 
 import android.graphics.Bitmap
 import com.meta.wearable.dat.camera.types.StreamSessionState
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.detection.Detection
 
 data class StreamUiState(
     val streamSessionState: StreamSessionState = StreamSessionState.STOPPED,
@@ -22,4 +23,7 @@ data class StreamUiState(
     val capturedPhoto: Bitmap? = null,
     val isShareDialogVisible: Boolean = false,
     val isCapturing: Boolean = false,
+    val lastDetections: List<Detection> = emptyList(),
+    val lastLlmAnswer: String? = null,
+    val isAskingLlm: Boolean = false,
 )

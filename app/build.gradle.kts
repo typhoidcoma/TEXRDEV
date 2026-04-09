@@ -18,6 +18,8 @@ android {
 
   buildFeatures { buildConfig = true }
 
+  androidResources { noCompress += "tflite" }
+
   defaultConfig {
     applicationId = "com.meta.wearable.dat.externalsampleapps.cameraaccess"
     minSdk = 31
@@ -66,6 +68,7 @@ dependencies {
   implementation(libs.mwdat.core)
   implementation(libs.mwdat.camera)
   implementation(libs.mwdat.mockdevice)
+  implementation(libs.mediapipe.tasks.vision)
   androidTestImplementation(libs.androidx.ui.test.junit4)
   androidTestImplementation(libs.androidx.test.uiautomator)
   androidTestImplementation(libs.androidx.test.rules)

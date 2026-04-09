@@ -38,6 +38,9 @@ import com.meta.wearable.dat.camera.types.VideoFrame
 import com.meta.wearable.dat.camera.types.VideoQuality
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.selectors.DeviceSelector
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.detection.ObjectDetectorEngine
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.llm.LlmClient
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.llm.NoopLlmClient
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.wearables.WearablesViewModel
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -53,6 +56,7 @@ import kotlinx.coroutines.launch
 class StreamViewModel(
     application: Application,
     private val wearablesViewModel: WearablesViewModel,
+    private val llmClient: LlmClient = NoopLlmClient(),
 ) : AndroidViewModel(application) {
 
   companion object {
@@ -72,11 +76,29 @@ class StreamViewModel(
   // Presentation queue for buffering frames after color conversion
   private var presentationQueue: PresentationQueue? = null
 
+  // On-device object detector — created in startStream(), released in stopStream()
+  private var detectorEngine: ObjectDetectorEngine? = null
+
   fun startStream() {
     videoJob?.cancel()
     stateJob?.cancel()
     presentationQueue?.stop()
     presentationQueue = null
+    detectorEngine?.close()
+    detectorEngine = null
+
+    detectorEngine =
+        try {
+          ObjectDetectorEngine(
+              context = getApplication(),
+              onResults = { detections ->
+                _uiState.update { it.copy(lastDetections = detections) }
+              },
+          )
+        } catch (t: Throwable) {
+          Log.e(TAG, "Failed to initialize ObjectDetectorEngine", t)
+          null
+        }
 
     // Initialize presentation queue - frames are presented based on timestamp, not arrival time
     // Uses IntArray pooling for efficiency - cheaper than Bitmap.copy()
@@ -125,9 +147,32 @@ class StreamViewModel(
     stateJob = null
     presentationQueue?.stop()
     presentationQueue = null
+    detectorEngine?.close()
+    detectorEngine = null
     streamSession?.close()
     streamSession = null
     _uiState.update { INITIAL_STATE }
+  }
+
+  fun askLlm(question: String) {
+    if (uiState.value.isAskingLlm) return
+    val frame = uiState.value.videoFrame
+    val detections = uiState.value.lastDetections
+    _uiState.update { it.copy(isAskingLlm = true, lastLlmAnswer = null) }
+    viewModelScope.launch {
+      val answer =
+          try {
+            llmClient.ask(question, frame, detections)
+          } catch (t: Throwable) {
+            Log.e(TAG, "LLM request failed", t)
+            "Error: ${t.message}"
+          }
+      _uiState.update { it.copy(isAskingLlm = false, lastLlmAnswer = answer) }
+    }
+  }
+
+  fun clearLlmAnswer() {
+    _uiState.update { it.copy(lastLlmAnswer = null) }
   }
 
   fun capturePhoto() {
@@ -204,6 +249,7 @@ class StreamViewModel(
             videoFrame.height,
         )
     if (bitmap != null) {
+      detectorEngine?.submit(bitmap, videoFrame.presentationTimeUs)
       presentationQueue?.enqueue(
           bitmap,
           videoFrame.presentationTimeUs,

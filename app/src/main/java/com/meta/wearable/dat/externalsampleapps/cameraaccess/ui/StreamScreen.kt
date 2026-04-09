@@ -24,11 +24,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QuestionAnswer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -56,6 +67,7 @@ fun StreamScreen(
         ),
 ) {
   val streamUiState by streamViewModel.uiState.collectAsStateWithLifecycle()
+  var askDialogOpen by remember { mutableStateOf(false) }
 
   LaunchedEffect(Unit) { streamViewModel.startStream() }
 
@@ -102,8 +114,28 @@ fun StreamScreen(
         CaptureButton(
             onClick = { streamViewModel.capturePhoto() },
         )
+
+        // Ask-the-LLM button
+        FilledIconButton(onClick = { askDialogOpen = true }) {
+          Icon(
+              imageVector = Icons.Filled.QuestionAnswer,
+              contentDescription = "Ask about what you see",
+          )
+        }
       }
     }
+  }
+
+  if (askDialogOpen) {
+    AskLlmDialog(
+        isAsking = streamUiState.isAskingLlm,
+        answer = streamUiState.lastLlmAnswer,
+        onSubmit = { question -> streamViewModel.askLlm(question) },
+        onDismiss = {
+          askDialogOpen = false
+          streamViewModel.clearLlmAnswer()
+        },
+    )
   }
 
   streamUiState.capturedPhoto?.let { photo ->
@@ -118,4 +150,47 @@ fun StreamScreen(
       )
     }
   }
+}
+
+@Composable
+private fun AskLlmDialog(
+    isAsking: Boolean,
+    answer: String?,
+    onSubmit: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+  var question by remember { mutableStateOf("") }
+  AlertDialog(
+      onDismissRequest = onDismiss,
+      title = { Text("Ask about what you see") },
+      text = {
+        if (answer != null) {
+          Text(answer)
+        } else {
+          OutlinedTextField(
+              value = question,
+              onValueChange = { question = it },
+              label = { Text("Your question") },
+              enabled = !isAsking,
+          )
+        }
+      },
+      confirmButton = {
+        if (answer != null) {
+          TextButton(onClick = onDismiss) { Text("Close") }
+        } else {
+          TextButton(
+              onClick = { onSubmit(question) },
+              enabled = !isAsking && question.isNotBlank(),
+          ) {
+            Text(if (isAsking) "Asking…" else "Ask")
+          }
+        }
+      },
+      dismissButton = {
+        if (answer == null) {
+          TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+      },
+  )
 }
