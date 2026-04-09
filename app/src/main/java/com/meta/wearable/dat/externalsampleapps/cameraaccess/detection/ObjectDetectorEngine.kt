@@ -46,6 +46,13 @@ class ObjectDetectorEngine(
   // Held so the result listener can stamp the original frame timestamp on each Detection
   @Volatile private var inFlightTimestampUs: Long = 0L
 
+  // Reusable bitmap buffer — avoids allocating a fresh ~1-2 MB bitmap per inference (10 Hz).
+  // Double-buffered: we write into whichever slot isn't currently being read by MediaPipe.
+  private var bufferA: Bitmap? = null
+  private var bufferB: Bitmap? = null
+  private var useA: Boolean = true
+  private var pixelBuf: IntArray = IntArray(0)
+
   init {
     // CPU delegate (not GPU). EfficientDet-Lite0 is small enough to run at >30 FPS on CPU on
     // any modern phone, and the GPU delegate's EGL context grabs were conflicting with the DAT
@@ -91,8 +98,28 @@ class ObjectDetectorEngine(
 
     inFlightTimestampUs = frameTimestampUs
     try {
-      val snapshot = bitmap.copy(Bitmap.Config.ARGB_8888, false)
-      val mpImage = BitmapImageBuilder(snapshot).build()
+      // Reuse a double-buffered bitmap instead of bitmap.copy() each frame.
+      // One buffer is being read by MediaPipe's async thread; we write into the other.
+      val w = bitmap.width
+      val h = bitmap.height
+      val buf = if (useA) {
+        val b = bufferA
+        if (b != null && b.width == w && b.height == h && !b.isRecycled) b
+        else Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bufferA = it }
+      } else {
+        val b = bufferB
+        if (b != null && b.width == w && b.height == h && !b.isRecycled) b
+        else Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bufferB = it }
+      }
+      useA = !useA
+
+      // Copy pixels from the shared source into our private buffer (reuse the pixel array)
+      val size = w * h
+      if (pixelBuf.size < size) pixelBuf = IntArray(size)
+      bitmap.getPixels(pixelBuf, 0, w, 0, 0, w, h)
+      buf.setPixels(pixelBuf, 0, w, 0, 0, w, h)
+
+      val mpImage = BitmapImageBuilder(buf).build()
       detector.detectAsync(mpImage, tsMs)
     } catch (t: Throwable) {
       Log.e(TAG, "Failed to submit frame for detection", t)
@@ -135,6 +162,11 @@ class ObjectDetectorEngine(
     } catch (t: Throwable) {
       Log.w(TAG, "Error closing ObjectDetector", t)
     }
+    bufferA?.recycle()
+    bufferB?.recycle()
+    bufferA = null
+    bufferB = null
+    pixelBuf = IntArray(0)
     Log.i(TAG, "ObjectDetectorEngine: closed")
   }
 
