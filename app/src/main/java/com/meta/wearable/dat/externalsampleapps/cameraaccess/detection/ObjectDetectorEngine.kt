@@ -39,16 +39,20 @@ class ObjectDetectorEngine(
 
   private val detector: ObjectDetector
 
-  private var lastSubmitUs: Long = Long.MIN_VALUE
-  private var lastTimestampMs: Long = Long.MIN_VALUE
+  private var lastSubmitUs: Long = 0L
+  private var firstSubmit: Boolean = true
+  private var lastTimestampMs: Long = 0L
 
   // Held so the result listener can stamp the original frame timestamp on each Detection
   @Volatile private var inFlightTimestampUs: Long = 0L
 
   init {
+    // CPU delegate (not GPU). EfficientDet-Lite0 is small enough to run at >30 FPS on CPU on
+    // any modern phone, and the GPU delegate's EGL context grabs were conflicting with the DAT
+    // video pipeline (white preview / no frames delivered when GPU was enabled).
     val baseOptions =
         BaseOptions.builder()
-            .setDelegate(Delegate.GPU)
+            .setDelegate(Delegate.CPU)
             .setModelAssetPath(modelAsset)
             .build()
 
@@ -76,7 +80,8 @@ class ObjectDetectorEngine(
    * bitmap, producing a blank/white preview.
    */
   fun submit(bitmap: Bitmap, frameTimestampUs: Long) {
-    if (frameTimestampUs - lastSubmitUs < minSubmitIntervalUs) return
+    if (!firstSubmit && frameTimestampUs - lastSubmitUs < minSubmitIntervalUs) return
+    firstSubmit = false
     lastSubmitUs = frameTimestampUs
 
     // MediaPipe LIVE_STREAM requires strictly monotonically increasing millisecond timestamps.

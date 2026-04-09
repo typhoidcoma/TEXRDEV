@@ -64,6 +64,12 @@ class StreamViewModel(
   companion object {
     private const val TAG = "StreamViewModel"
     private val INITIAL_STATE = StreamUiState()
+
+    /**
+     * Kill switch for the on-device object detector. Flip to false to bypass MediaPipe entirely
+     * (no init, no per-frame submit). Used for fault-isolating display/transport issues.
+     */
+    private const val DETECTION_ENABLED = true
   }
 
   private val deviceSelector: DeviceSelector = wearablesViewModel.deviceSelector
@@ -91,7 +97,7 @@ class StreamViewModel(
 
     // Build the detector off the main thread — MediaPipe's GPU delegate init can stall the
     // UI for several seconds, which would freeze composition before the first frame renders.
-    viewModelScope.launch {
+    if (DETECTION_ENABLED) viewModelScope.launch {
       val engine =
           withContext(Dispatchers.IO) {
             try {
@@ -263,7 +269,9 @@ class StreamViewModel(
             videoFrame.height,
         )
     if (bitmap != null) {
-      detectorEngine?.submit(bitmap, videoFrame.presentationTimeUs)
+      if (DETECTION_ENABLED) {
+        detectorEngine?.submit(bitmap, videoFrame.presentationTimeUs)
+      }
       presentationQueue?.enqueue(
           bitmap,
           videoFrame.presentationTimeUs,
