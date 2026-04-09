@@ -68,7 +68,12 @@ class ObjectDetectorEngine(
 
   /**
    * Submit a frame for inference. No-op if called more often than the throttle interval.
-   * The bitmap must remain valid until MediaPipe finishes reading its pixels.
+   *
+   * IMPORTANT: the caller's bitmap is the shared, in-place-mutated cache from
+   * YuvToBitmapConverter — every video frame overwrites its pixels. We MUST take a private
+   * copy before handing it to MediaPipe, otherwise MediaPipe's async worker thread will read
+   * partially-overwritten pixels and the display path will fight with us over the same
+   * bitmap, producing a blank/white preview.
    */
   fun submit(bitmap: Bitmap, frameTimestampUs: Long) {
     if (frameTimestampUs - lastSubmitUs < minSubmitIntervalUs) return
@@ -81,7 +86,8 @@ class ObjectDetectorEngine(
 
     inFlightTimestampUs = frameTimestampUs
     try {
-      val mpImage = BitmapImageBuilder(bitmap).build()
+      val snapshot = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+      val mpImage = BitmapImageBuilder(snapshot).build()
       detector.detectAsync(mpImage, tsMs)
     } catch (t: Throwable) {
       Log.e(TAG, "Failed to submit frame for detection", t)

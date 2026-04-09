@@ -46,12 +46,14 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class StreamViewModel(
     application: Application,
@@ -87,18 +89,30 @@ class StreamViewModel(
     detectorEngine?.close()
     detectorEngine = null
 
-    detectorEngine =
-        try {
-          ObjectDetectorEngine(
-              context = getApplication(),
-              onResults = { detections ->
-                _uiState.update { it.copy(lastDetections = detections) }
-              },
-          )
-        } catch (t: Throwable) {
-          Log.e(TAG, "Failed to initialize ObjectDetectorEngine", t)
-          null
-        }
+    // Build the detector off the main thread — MediaPipe's GPU delegate init can stall the
+    // UI for several seconds, which would freeze composition before the first frame renders.
+    viewModelScope.launch {
+      val engine =
+          withContext(Dispatchers.IO) {
+            try {
+              ObjectDetectorEngine(
+                  context = getApplication(),
+                  onResults = { detections ->
+                    _uiState.update { it.copy(lastDetections = detections) }
+                  },
+              )
+            } catch (t: Throwable) {
+              Log.e(TAG, "Failed to initialize ObjectDetectorEngine", t)
+              null
+            }
+          }
+      // If stopStream() ran while we were initializing, drop the new engine immediately.
+      if (videoJob == null) {
+        engine?.close()
+      } else {
+        detectorEngine = engine
+      }
+    }
 
     // Initialize presentation queue - frames are presented based on timestamp, not arrival time
     // Uses IntArray pooling for efficiency - cheaper than Bitmap.copy()
